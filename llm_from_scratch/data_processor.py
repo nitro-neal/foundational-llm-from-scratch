@@ -26,11 +26,10 @@ class DataProcessor:
         preprocessed = re.split(r'([,.:;?_!"()\']|--|\s)', all_raw_text)
         preprocessed = [valid_split for item in preprocessed if (valid_split := item.strip())]
 
-        all_words = sorted(list(set(preprocessed)))
-        
-        vocab = {}
-        for i, word in enumerate(all_words):
-            vocab[word] = i
+        all_tokens = sorted(list(set(preprocessed)))
+        all_tokens.extend(["<|endoftext|>", "<|unk|>"])
+
+        vocab = {token:integer for integer,token in enumerate(all_tokens)}
 
         return vocab
 

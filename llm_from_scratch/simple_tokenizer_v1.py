@@ -11,6 +11,24 @@ class SimpleTokenizerV1:
         preprocessed = [
             item.strip() for item in preprocessed if item.strip()
         ]
+
+        new_preprocessed = []
+
+        for item in preprocessed:
+            if item in self.str_to_int:
+                new_preprocessed.append(item)
+            else:
+                new_preprocessed.append("<|unk|>")
+
+        preprocessed = new_preprocessed
+
+        '''
+        preprocessed = [
+            item if item in self.str_to_int
+            else "<|unk|>" for item in preprocessed
+         ]
+        '''
+
         ids = [self.str_to_int[s] for s in preprocessed]
         return ids
         
