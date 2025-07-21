@@ -5,6 +5,7 @@ import tiktoken
 import torch
 from gpt_model import GPTModel
 from dataset_v1 import GPTDatasetV1, DataLoader
+from gpt_download import download_and_load_gpt2
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
@@ -423,11 +424,77 @@ def train_and_save(model_name, model_config, tokenizer):
     '''
 
 
+def assign(left, right):
+    if left.shape != right.shape:
+        raise ValueError(f"Shape mismatch. Left: {left.shape}, Right: {right.shape}")
+    return torch.nn.Parameter(torch.tensor(right))
 
+import numpy as np
+
+def load_weights_into_gpt(gpt, params):
+    gpt.pos_emb.weight = assign(gpt.pos_emb.weight, params['wpe'])
+    gpt.tok_emb.weight = assign(gpt.tok_emb.weight, params['wte'])
+    
+    for b in range(len(params["blocks"])):
+        q_w, k_w, v_w = np.split(
+            (params["blocks"][b]["attn"]["c_attn"])["w"], 3, axis=-1)
+        gpt.trf_blocks[b].att.W_query.weight = assign(
+            gpt.trf_blocks[b].att.W_query.weight, q_w.T)
+        gpt.trf_blocks[b].att.W_key.weight = assign(
+            gpt.trf_blocks[b].att.W_key.weight, k_w.T)
+        gpt.trf_blocks[b].att.W_value.weight = assign(
+            gpt.trf_blocks[b].att.W_value.weight, v_w.T)
+
+        q_b, k_b, v_b = np.split(
+            (params["blocks"][b]["attn"]["c_attn"])["b"], 3, axis=-1)
+        gpt.trf_blocks[b].att.W_query.bias = assign(
+            gpt.trf_blocks[b].att.W_query.bias, q_b)
+        gpt.trf_blocks[b].att.W_key.bias = assign(
+            gpt.trf_blocks[b].att.W_key.bias, k_b)
+        gpt.trf_blocks[b].att.W_value.bias = assign(
+            gpt.trf_blocks[b].att.W_value.bias, v_b)
+
+        gpt.trf_blocks[b].att.out_proj.weight = assign(
+            gpt.trf_blocks[b].att.out_proj.weight, 
+            params["blocks"][b]["attn"]["c_proj"]["w"].T)
+        gpt.trf_blocks[b].att.out_proj.bias = assign(
+            gpt.trf_blocks[b].att.out_proj.bias, 
+            params["blocks"][b]["attn"]["c_proj"]["b"])
+
+        gpt.trf_blocks[b].ff.layers[0].weight = assign(
+            gpt.trf_blocks[b].ff.layers[0].weight, 
+            params["blocks"][b]["mlp"]["c_fc"]["w"].T)
+        gpt.trf_blocks[b].ff.layers[0].bias = assign(
+            gpt.trf_blocks[b].ff.layers[0].bias, 
+            params["blocks"][b]["mlp"]["c_fc"]["b"])
+        gpt.trf_blocks[b].ff.layers[2].weight = assign(
+            gpt.trf_blocks[b].ff.layers[2].weight, 
+            params["blocks"][b]["mlp"]["c_proj"]["w"].T)
+        gpt.trf_blocks[b].ff.layers[2].bias = assign(
+            gpt.trf_blocks[b].ff.layers[2].bias, 
+            params["blocks"][b]["mlp"]["c_proj"]["b"])
+
+        gpt.trf_blocks[b].norm1.scale = assign(
+            gpt.trf_blocks[b].norm1.scale, 
+            params["blocks"][b]["ln_1"]["g"])
+        gpt.trf_blocks[b].norm1.shift = assign(
+            gpt.trf_blocks[b].norm1.shift, 
+            params["blocks"][b]["ln_1"]["b"])
+        gpt.trf_blocks[b].norm2.scale = assign(
+            gpt.trf_blocks[b].norm2.scale, 
+            params["blocks"][b]["ln_2"]["g"])
+        gpt.trf_blocks[b].norm2.shift = assign(
+            gpt.trf_blocks[b].norm2.shift, 
+            params["blocks"][b]["ln_2"]["b"])
+
+    gpt.final_norm.scale = assign(gpt.final_norm.scale, params["g"])
+    gpt.final_norm.shift = assign(gpt.final_norm.shift, params["b"])
+    gpt.out_head.weight = assign(gpt.out_head.weight, params["wte"])
 
 if __name__ == "__main__":
 
-    model_name = "my_model_and_optimizer_2.pth"
+    # model_name = "my_model_and_optimizer_2.pth"
+    model_name = "gpt2"
 
     GPT_CONFIG_124M = {
         "vocab_size": 50257,   # Vocabulary size
@@ -441,12 +508,57 @@ if __name__ == "__main__":
 
     tokenizer = tiktoken.get_encoding("gpt2")
 
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Note:
+    # Uncommenting the following lines will allow the code to run on Apple Silicon chips, if applicable,
+    # which is approximately 2x faster than on an Apple CPU (as measured on an M3 MacBook Air).
+    # However, the resulting loss values may be slightly different.
+
+    #if torch.cuda.is_available():
+    #    device = torch.device("cuda")
+    #elif torch.backends.mps.is_available():
+    #    device = torch.device("mps")
+    #else:
+    #    device = torch.device("cpu")
+    #
+    # print(f"Using {device} device.")
+
     model = None
     
-    if not os.path.exists(model_name):
+    if model_name != "gpt2" and not os.path.exists(model_name):
         print("\nTraining model... will save as: ", model_name)
         model = train_and_save(model_name, GPT_CONFIG_124M, tokenizer)
         print("\n ~~ Finished training ~~ ")
+
+    elif model_name == "gpt2":
+        print("\nLoading gpt2 model with name: ", model_name)
+
+        settings, params = download_and_load_gpt2(model_size="124M", models_dir="gpt2")
+
+        # Define model configurations in a dictionary for compactness
+        model_configs = {
+            "gpt2-small (124M)": {"emb_dim": 768, "n_layers": 12, "n_heads": 12},
+            "gpt2-medium (355M)": {"emb_dim": 1024, "n_layers": 24, "n_heads": 16},
+            "gpt2-large (774M)": {"emb_dim": 1280, "n_layers": 36, "n_heads": 20},
+            "gpt2-xl (1558M)": {"emb_dim": 1600, "n_layers": 48, "n_heads": 25},
+        }
+
+        # Copy the base configuration and update with specific model settings
+        gpt_model_name = "gpt2-small (124M)"  # Example model name
+        # NEW_CONFIG = GPT_CONFIG_124M.copy()
+        GPT_CONFIG_124M.update(model_configs[gpt_model_name])
+        GPT_CONFIG_124M.update({"context_length": 1024, "qkv_bias": True})
+
+        model = GPTModel(GPT_CONFIG_124M)
+        model.eval();
+    
+        load_weights_into_gpt(model, params)
+        model.to(device);
+    
+        print("\n ~~ Finished loading ~~ ")
+    
     else:
         print("\nLoading model with name: ", model_name)
         checkpoint = torch.load(model_name, weights_only=True)
@@ -459,18 +571,22 @@ if __name__ == "__main__":
         model.train();
         print("\n ~~ Finished loading ~~ ")
 
-    for i in range(20):
-        # we have trained or loaded a model at this point
+
+    for i in range(100):
+
         token_ids = generate(
             model=model,
-            idx=text_to_token_ids("The color of they sky is", tokenizer),
-            max_new_tokens=15,
+            idx=text_to_token_ids("Every effort moves you", tokenizer).to(device),
+            max_new_tokens=25,
             context_size=GPT_CONFIG_124M["context_length"],
-            top_k=25,
-            temperature=1.4
+            top_k=50,
+            temperature=1.5
         )
 
         print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
+
+
+    
 
 
 
