@@ -547,6 +547,7 @@ if __name__ == "__main__":
 
         # Copy the base configuration and update with specific model settings
         gpt_model_name = "gpt2-small (124M)"  # Example model name
+        # gpt_model_name = "gpt2-xl (1558M)"
         # NEW_CONFIG = GPT_CONFIG_124M.copy()
         GPT_CONFIG_124M.update(model_configs[gpt_model_name])
         GPT_CONFIG_124M.update({"context_length": 1024, "qkv_bias": True})
@@ -572,6 +573,48 @@ if __name__ == "__main__":
         print("\n ~~ Finished loading ~~ ")
 
 
+    with open("data/the-verdict.txt", "r", encoding="utf-8") as f:
+        text_data = f.read()
+
+    # Train/validation ratio
+    train_ratio = 0.70
+    split_idx = int(train_ratio * len(text_data))
+    train_data = text_data[:split_idx]
+    val_data = text_data[split_idx:]
+
+    train_loader = create_dataloader_v1(
+        train_data,
+        batch_size=2,
+        max_length=GPT_CONFIG_124M["context_length"],
+        stride=GPT_CONFIG_124M["context_length"],
+        drop_last=True,
+        shuffle=True,
+        num_workers=0
+    )
+
+    val_loader = create_dataloader_v1(
+        val_data,
+        batch_size=2,
+        max_length=GPT_CONFIG_124M["context_length"],
+        stride=GPT_CONFIG_124M["context_length"],
+        drop_last=False,
+        shuffle=False,
+        num_workers=0
+    )
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.0004, weight_decay=0.1)
+
+    num_epochs = 10
+    train_losses, val_losses, tokens_seen = train_model_simple(
+        model, train_loader, val_loader, optimizer, device,
+        num_epochs=num_epochs, eval_freq=5, eval_iter=5,
+        start_context="Every effort moves you", tokenizer=tokenizer
+    )
+
+    epochs_tensor = torch.linspace(0, num_epochs, len(train_losses))
+    plot_losses(epochs_tensor, tokens_seen, train_losses, val_losses)
+
+    '''
     for i in range(100):
 
         token_ids = generate(
@@ -584,6 +627,7 @@ if __name__ == "__main__":
         )
 
         print("Output text:\n", token_ids_to_text(token_ids, tokenizer))
+    '''
 
 
     
